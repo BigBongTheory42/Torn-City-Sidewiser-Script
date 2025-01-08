@@ -1,0 +1,2975 @@
+// ==UserScript==
+// @name         Torn City Sidewinder
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  Adds a Toggle-able Sidebar with draggable groups, notepads, attack lists, improved UI, and more for Torn City!
+// @author       Doobiesuckin
+// @match        https://www.torn.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Main state variables
+    let groups = loadState('sidebarGroups', []);
+    let notepads = loadState('sidebarNotepads', []);
+    let attackLists = loadState('attackLists', []);
+    let todoLists = loadState('todoLists', []);
+    let allyEnemyLists = loadState('allyEnemyLists', []);
+    let loanTracker = loadState('loanTracker', { entries: [] });
+    let auctionTracker = loadState('auctionTracker', { auctions: [] });
+    let isEditMode = false;
+    let isDeleteMode = false;
+    let isDragging = false;
+    let draggedElement = null;
+    let initialX, initialY;
+    let isLightMode = loadState('lightMode', false);
+    const activeDialogs = new Map();
+
+    // ==================== Constants ====================
+    const TRADEMARK = '𝕊𝕚𝕕𝕖𝕎𝕚𝕟𝕕𝕖𝕣🔰';
+    const TAGLINES = [
+        "Made with love by Doobiesuckin [3255641]",
+        "Sometimes, It Doobiesuckin",
+        "Hope your Enjoying the SideWinder Script!",
+        "I queef out my ass sometimes (Don't Tell Mom)",
+        "Does anyone actually read these?",
+        "Tokyo Syndicate is the Best Faction",
+        "Detecting Multiple Leviathan Class lifeforms in the Region",
+        "Wanna Sign My Petition?",
+        "Gordon! Get away from the Beam!",
+        "Wait...If I smack Dwayne Johnsons butt, Did I hit rock bottom?",
+        "I wrote this Splash Text on 12-29-24",
+        "A Friend with Weed is a Friend Indeed",
+        "So, You like Jazz?",
+        "Fixing Torn's UI One Script at a Time!",
+        "Caution: May contain nuts.",
+        "All bugs are intentional. Trust the process",
+        "This Sidebar is Fully optimized for staring contests.",
+        "You Should give me a Donation, You know you want to",
+        "Check out Community Crafters on Discord Forums!",
+        "30% Less Likely to scam you over Leslie!",
+        "Did you know? The average cloud weighs about 1 million pounds!",
+        "Did you know? Some snails can sleep for three years straight!",
+        "Did you know? Cheese is the most stolen food in the world!",
+        "Be sure to Like and Review our Forum post!",
+        "-Insert Cool Sidebar Music-",
+        "I'm alive! I'm Ali...ERR0r..Sidewinder Re-Initialized",
+        "A Script Chedburn Himself is Jealous of!",
+        "Woah, Was that Legal?",
+        "Still trying to find the funny",
+        "Did you Take a Xanax Today?",
+        "Remember Bazaars? Those were cool huh",
+        "Keep Grinding those Crimes!",
+        "Why not sign yourself up for a race?",
+        "Your so close to that Gambling win, I can Feel it!",
+        "Voice Mode Enabled, You can now Start Voicing Commands",
+        "Ooh Baby, I'm debugging myself right now.",
+        "Never Gonna Give you up, Never gonna let you down",
+        "1f c0d3 === l1f3) { r3sp4wn();",
+        "I don't even know how to code! -Doobie",
+        "There's no place like 127.0.0.1...",
+        "Happiness is just a hospital trip away.",
+        "One man's trash is another's bazaar stock.",
+        "Sleep is overrated when there's money to be mugged.",
+        "Peace is just the downtime between wars.",
+        "You call it scamming. We call it creative capitalism.",
+        "You can Drag and Resize Groups in Edit Mode",
+        "You can Delete Links, Targets, Groups and more In Delete Mode",
+        "Create New Groups by Clicking the Green + button!",
+        "Use Unicode when Selectiong Emojis for Links",
+        "Find me on Dread! JK",
+        "Struggle is the enemy, Weed is my remedy",
+        "Dirty Hands, Clean Money",
+        "Loading Additional Skill Modules",
+        "Fire Script. No cap, On God - You Probably",
+        "Idle Hands Leave you evil thoughts",
+        "100% American Made",
+        "If Diddy Did Diddle Dudes, How many Dudes Did Diddy Diddle?",
+        "Add a new Link! I can Take it!",
+        "Why'd you just do that?",
+        "You've been Blessed! No OD's For 0.25 seconds! Better Hurry!",
+        "Is this thing on",
+        "01010101 01001110 01100101 01110010 01100100",
+        "Shout out my dog, Torque the Husky",
+        "Find Torn Tutorials on Youtube, Forums, and more!",
+        "That didnt go to plan...",
+        "Bogie, It was all Bogie",
+    ];
+
+    // ==================== State Management Functions ====================
+
+    function saveState(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (e) {
+            console.error('Error saving state:', e);
+        }
+    }
+
+    function loadState(key, defaultValue) {
+        try {
+            const saved = localStorage.getItem(key);
+            return saved ? JSON.parse(saved) : defaultValue;
+        } catch (e) {
+            console.error('Error loading state:', e);
+            return defaultValue;
+        }
+    }
+
+    function saveMinimizeState(type, index, isMinimized) {
+        const minimizeStates = loadState('minimizeStates', {});
+        minimizeStates[`${type}-${index}`] = isMinimized;
+        saveState('minimizeStates', minimizeStates);
+    }
+
+    function isElementMinimized(type, index) {
+        const minimizeStates = loadState('minimizeStates', {});
+        return minimizeStates[`${type}-${index}`] || false;
+    }
+
+    // Dialog state management
+    function saveDialogState(dialogId, state) {
+        try {
+            GM_setValue(dialogId, state);
+            activeDialogs.set(dialogId, state);
+        } catch (e) {
+            console.error('Error saving dialog state:', e);
+        }
+    }
+
+    function removeDialogState(dialogId) {
+        try {
+            GM_setValue(dialogId, null);
+            activeDialogs.delete(dialogId);
+        } catch (e) {
+            console.error('Error removing dialog state:', e);
+        }
+    }
+
+    function restoreActiveDialogs() {
+        try {
+            for (const [dialogId, state] of activeDialogs.entries()) {
+                if (state.type === 'prompt') {
+                    createPromptDialog(state.title, state.fields, dialogId);
+                } else if (state.type === 'link') {
+                    createLinkDialog(state.groupIndex, dialogId);
+                } else if (state.type === 'allyEnemy') {
+                    createAllyEnemyDialog(state.listIndex, dialogId);
+                } else if (state.type === 'loanEntry') {
+                    createLoanEntryDialog(dialogId);
+                } else if (state.type === 'auctionEntry') {
+                    createAuctionEntryDialog(dialogId);
+                }
+            }
+        } catch (e) {
+            console.error('Error restoring dialogs:', e);
+        }
+    }
+
+    function setupDragListeners(container) {
+        let dragStartTime;
+        const DRAG_THRESHOLD = 100; // ms threshold to differentiate click from drag
+
+        container.addEventListener('mousedown', (e) => {
+            if (!isEditMode || e.target.classList.contains('no-drag')) return;
+
+            const draggable = e.target.closest('.draggable');
+            if (!draggable) return;
+
+            dragStartTime = Date.now();
+            isDragging = true;
+            draggedElement = draggable;
+            initialX = e.clientX - draggable.offsetLeft;
+            initialY = e.clientY - draggable.offsetTop;
+
+            draggable.style.opacity = '0.8';
+            draggable.style.transition = 'none';
+            draggable.style.zIndex = '1000';
+
+            // Store initial position for cancellation
+            draggable.dataset.initialLeft = draggable.style.left;
+            draggable.dataset.initialTop = draggable.style.top;
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging || !draggedElement) return;
+
+            const x = e.clientX - initialX;
+            const y = e.clientY - initialY;
+
+            const container = document.getElementById('groupContainer');
+            const maxX = container.offsetWidth - draggedElement.offsetWidth;
+            const maxY = container.offsetHeight - draggedElement.offsetHeight;
+
+            draggedElement.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
+            draggedElement.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (!draggedElement) return;
+
+            const dragDuration = Date.now() - dragStartTime;
+
+            if (dragDuration < DRAG_THRESHOLD) {
+                // Treat as click - revert position
+                draggedElement.style.left = draggedElement.dataset.initialLeft;
+                draggedElement.style.top = draggedElement.dataset.initialTop;
+            } else {
+                // Save new position
+                const index = draggedElement.dataset.index;
+                const type = draggedElement.dataset.type;
+                const position = {
+                    x: parseInt(draggedElement.style.left),
+                    y: parseInt(draggedElement.style.top)
+                };
+
+                try {
+                    if (type === 'group') {
+                        groups[index].position = position;
+                        saveState('sidebarGroups', groups);
+                    } else if (type === 'notepad') {
+                        notepads[index].position = position;
+                        saveState('sidebarNotepads', notepads);
+                    } else if (type === 'attackList') {
+                        attackLists[index].position = position;
+                        saveState('attackLists', attackLists);
+                    } else if (type === 'todoList') {
+                        todoLists[index].position = position;
+                        saveState('todoLists', todoLists);
+                    } else if (type === 'allyEnemyList') {
+                        allyEnemyLists[index].position = position;
+                        saveState('allyEnemyLists', allyEnemyLists);
+                    } else if (type === 'loanTracker') {
+                        loanTracker.position = position;
+                        saveState('loanTracker', loanTracker);
+                    } else if (type === 'auctionTracker') {
+                        auctionTracker.position = position;
+                        saveState('auctionTracker', auctionTracker);
+                    }
+                } catch (error) {
+                    console.error('Error saving position:', error);
+                    draggedElement.style.left = draggedElement.dataset.initialLeft;
+                    draggedElement.style.top = draggedElement.dataset.initialTop;
+                }
+            }
+
+            draggedElement.style.opacity = '1';
+            draggedElement.style.transition = 'opacity 0.3s ease';
+            draggedElement.style.zIndex = '1';
+
+            isDragging = false;
+            draggedElement = null;
+            dragStartTime = null;
+        });
+    }
+
+    // ==================== UI Creation Functions ====================
+
+    function createSidebar() {
+        const sidebar = document.createElement('div');
+        sidebar.id = 'customSidebar';
+        const persistentState = loadState('sidebarState', { isHidden: false });
+        const isHidden = persistentState.isHidden;
+        saveState('sidebarState', { isHidden: isHidden });
+
+        sidebar.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 425px;
+            height: 100%;
+            background-color: ${isLightMode ? '#ffffff' : '#1a1a1a'};
+            color: ${isLightMode ? '#000000' : 'white'};
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            border-right: 2px solid #444444;
+            transition: transform 0.3s ease-in-out;
+            transform: translateX(${isHidden ? '-102%' : '0'});
+            will-change: transform;
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        `;
+
+        // Hide scrollbar
+        sidebar.addEventListener('scroll', () => {
+            sidebar.style.overflowY = 'hidden';
+        });
+
+        document.body.appendChild(sidebar);
+
+        const toggleButton = createToggleButton(sidebar);
+        const topBar = createTopBar();
+
+        const groupContainer = document.createElement('div');
+        groupContainer.id = 'groupContainer';
+        groupContainer.style.cssText = `
+            flex-grow: 1;
+            padding: 10px;
+            margin-top: 50px;
+            margin-bottom: 30px;
+            position: relative;
+            overflow-y: auto;
+        `;
+
+        // Create tagline element (bottom of sidebar)
+        const taglineContainer = document.createElement('div');
+        taglineContainer.style.cssText = `
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: ${isLightMode ? '#000000' : 'white'};
+            font-style: italic;
+            font-size: 14px;
+            text-align: center;
+            pointer-events: none;
+            white-space: nowrap;
+        `;
+        taglineContainer.textContent = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
+
+        sidebar.appendChild(topBar);
+        sidebar.appendChild(groupContainer);
+        sidebar.appendChild(taglineContainer);
+
+        setupDragListeners(groupContainer);
+        refreshSidebar();
+        document.body.appendChild(toggleButton);
+
+        restoreActiveDialogs();
+    }
+
+    function createToggleButton(sidebar) {
+        const toggleButton = document.createElement('button');
+        toggleButton.id = 'toggleButton';
+        toggleButton.textContent = '☰';
+        const isHidden = loadState('sidebarHidden', false);
+
+        toggleButton.style.cssText = `
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background-color: #444
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            font-size: 18px;
+            cursor: pointer;
+            z-index: 1100;
+            transition: transform 0.3s ease-in-out, background-color 0.2s ease;
+            border-radius: 4px;
+            transform: ${isHidden ? 'rotate(180deg)' : 'rotate(0deg)'};
+        `;
+
+        toggleButton.addEventListener('click', () => {
+            const newHiddenState = !loadState('sidebarHidden', false);
+            saveState('sidebarHidden', newHiddenState);
+
+            requestAnimationFrame(() => {
+                sidebar.style.transform = newHiddenState ? 'translateX(-102%)' : 'translateX(0)';
+                toggleButton.style.transform = newHiddenState ? 'rotate(180deg)' : 'rotate(0deg)';
+                toggleButton.style.backgroundColor = newHiddenState ? '#666' : '#444';
+            });
+        });
+
+        toggleButton.addEventListener('mouseover', () => {
+            toggleButton.style.backgroundColor = loadState('sidebarHidden', false) ? '#777' : '#555';
+        });
+
+        toggleButton.addEventListener('mouseout', () => {
+            toggleButton.style.backgroundColor = loadState('sidebarHidden', false) ? '#666' : '#444';
+        });
+
+        return toggleButton;
+    }
+
+    // ==================== Top Bar and Mode Controls ====================
+
+    function createTopBar() {
+        const topBar = document.createElement('div');
+        topBar.id = 'topBar';
+        topBar.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border-bottom: 1px solid #444;
+            width: 100%;
+            position: absolute;
+            top: 0;
+            height: 50px;
+            box-sizing: border-box;
+            z-index: 1101;
+        `;
+
+        // Create trademark container (now on left side)
+        const trademarkContainer = document.createElement('div');
+        trademarkContainer.style.cssText = `
+            position: absolute;
+            left: 60px;
+            color: white !important;
+            font-style: italic;
+            font-size: 14px;
+            white-space: nowrap;
+            pointer-events: none;
+            margin-left: 10px;
+        `;
+        trademarkContainer.textContent = TRADEMARK;
+        topBar.appendChild(trademarkContainer);
+
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.style.cssText = `
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-left: auto;
+        `;
+
+        // Create day reset countdown element
+        const countdownElement = document.createElement('div');
+        countdownElement.id = 'dayResetCountdown';
+        countdownElement.style.cssText = `
+            color: ${isLightMode ? '#000000' : 'white'};
+            font-size: 14px;
+            margin-right: 10px;
+        `;
+        buttonsContainer.insertBefore(countdownElement, buttonsContainer.firstChild);
+
+        // Update countdown every second
+        setInterval(updateDayResetCountdown, 1000);
+
+        // Define buttons with their properties
+        const buttons = [
+            { id: 'deleteButton', icon: '🗑️', color: '#cc3333', action: toggleDeleteMode },
+            { id: 'editButton', icon: '🛠', color: '#666666', action: toggleEditMode },
+            { id: 'addButton', icon: '➕', color: '#336633', action: showAddMenu }
+        ];
+
+        // Create light mode button first (will be on the left)
+        const lightModeButton = document.createElement('button');
+        lightModeButton.id = 'lightModeButton';
+        lightModeButton.innerHTML = '💡';
+        lightModeButton.style.cssText = `
+            background-color: #666666;
+            color: white;
+            border: none;
+            padding: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 36px;
+            height: 36px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        `;
+
+        // Add lightModeButton to the topBar BEFORE buttonsContainer
+        if (isEditMode) {
+            lightModeButton.style.display = 'flex';
+            topBar.insertBefore(lightModeButton, buttonsContainer);
+        }
+
+        // Create main buttons
+        buttons.forEach(({ id, icon, color, action }) => {
+            const button = document.createElement('button');
+            button.id = id;
+            button.innerHTML = icon;
+            button.style.cssText = `
+                background-color: ${color};
+                color: white;
+                border: none;
+                padding: 8px;
+                font-size: 16px;
+                cursor: pointer;
+                width: 36px;
+                height: 36px;
+                border-radius: 4px;
+                transition: all 0.3s ease;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: none;
+            `;
+
+            button.addEventListener('click', () => {
+                preserveSidebarAnimation();
+                action();
+
+                // Handle edit mode button click
+                if (id === 'editButton') {
+                    lightModeButton.style.display = isEditMode ? 'flex' : 'none';
+                }
+
+                // Update button glow effects
+                buttons.forEach(b => {
+                    const btn = document.getElementById(b.id);
+                    if (btn) {
+                        if ((b.id === 'editButton' && isEditMode) ||
+                            (b.id === 'deleteButton' && isDeleteMode)) {
+                            btn.style.boxShadow = '0 0 15px rgba(255, 255, 255, 0.5)';
+                        } else {
+                            btn.style.boxShadow = 'none';
+                        }
+                    }
+                });
+            });
+
+            // Add hover effects
+            button.addEventListener('mouseover', () => {
+                button.style.backgroundColor = color === '#666666' ? '#777777' :
+                                             color === '#cc3333' ? '#dd4444' : '#447744';
+            });
+
+            button.addEventListener('mouseout', () => {
+                button.style.backgroundColor = color;
+            });
+
+            buttonsContainer.appendChild(button);
+        });
+
+        // Add light mode button functionality
+        lightModeButton.addEventListener('click', () => {
+            toggleLightMode();
+            lightModeButton.style.backgroundColor = isLightMode ? '#888888' : '#666666';
+        });
+
+        lightModeButton.addEventListener('mouseover', () => {
+            lightModeButton.style.backgroundColor = '#777777';
+        });
+
+        lightModeButton.addEventListener('mouseout', () => {
+            lightModeButton.style.backgroundColor = isLightMode ? '#888888' : '#666666';
+        });
+
+        buttonsContainer.appendChild(lightModeButton);
+        topBar.appendChild(buttonsContainer);
+        return topBar;
+    }
+
+    function toggleLightMode() {
+        isLightMode = !isLightMode;
+        const sidebar = document.getElementById('customSidebar');
+
+        if (sidebar) {
+            sidebar.style.backgroundColor = isLightMode ? '#ffffff' :
+                (isEditMode ? '#1f331f' : isDeleteMode ? '#331f1f' : '#1a1a1a');
+            sidebar.style.color = isLightMode ? '#000000' : 'white';
+
+            // Update all text colors
+            const textElements = sidebar.querySelectorAll('div, span, p');
+            textElements.forEach(element => {
+                if (!element.classList.contains('no-light-mode')) {
+                    element.style.color = isLightMode ? '#000000' : 'white';
+                }
+            });
+        }
+
+        saveState('lightMode', isLightMode);
+        refreshSidebar(); // Refresh to update all elements
+    }
+
+    const trademarkContainer = document.querySelector('#topBar div:first-child');
+    if (trademarkContainer) {
+        trademarkContainer.style.color = 'white'; // Always keep trademark white
+    }
+
+    function toggleDeleteMode() {
+        isDeleteMode = !isDeleteMode;
+        isEditMode = false;
+        refreshSidebar();
+
+        const sidebar = document.getElementById('customSidebar');
+        if (sidebar) {
+            sidebar.style.backgroundColor = isDeleteMode ? '#331f1f' :
+                (isLightMode ? '#ffffff' : '#1a1a1a');
+        }
+
+        // Hide light mode button when exiting edit mode
+        const lightModeButton = document.getElementById('lightModeButton');
+        if (lightModeButton) {
+            lightModeButton.style.display = 'none';
+        }
+    }
+
+    function toggleEditMode() {
+        isEditMode = !isEditMode;
+        isDeleteMode = false;
+        refreshSidebar();
+
+        const sidebar = document.getElementById('customSidebar');
+        if (sidebar) {
+            sidebar.style.backgroundColor = isEditMode ? '#1f331f' :
+                (isLightMode ? '#ffffff' : '#1a1a1a');
+        }
+
+        // Show/hide resize handles
+        document.querySelectorAll('.draggable').forEach(element => {
+            const resizer = element.querySelector('[data-resizer]');
+            if (resizer) {
+                resizer.style.display = isEditMode ? 'flex' : 'none';
+            }
+        });
+
+        // Show/hide light mode button
+        const lightModeButton = document.getElementById('lightModeButton');
+        if (lightModeButton) {
+            lightModeButton.style.display = isEditMode ? 'flex' : 'none';
+        }
+    }
+    // ==================== Dialog Creation Functions ====================
+
+    async function createPromptDialog(title, fields, existingDialogId = null) {
+        return new Promise((resolve) => {
+            const dialogId = existingDialogId || 'dialog_' + Date.now();
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 2000;
+            `;
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: #2c2c2c;
+                padding: 20px;
+                border-radius: 5px;
+                min-width: 300px;
+                border: 1px solid #444;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            `;
+
+            dialog.innerHTML = `
+                <h3 style="color: white; margin: 0 0 15px 0;">${title}</h3>
+                <form id="promptForm_${dialogId}">
+                    ${fields.map(field => `
+                        <div style="margin-bottom: 10px;">
+                            <label style="color: white; display: block; margin-bottom: 5px;">${field.label}:</label>
+                            <input type="${field.type || 'text'}" id="${field.id}_${dialogId}"
+                                style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;"
+                                ${field.type === 'checkbox' ? 'class="checkbox-input"' : ''}>
+                        </div>
+                    `).join('')}
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="cancelBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #666; color: white; cursor: pointer;">Cancel</button>
+                        <button type="submit" style="padding: 5px 15px; border-radius: 3px; border: none; background: #4CAF50; color: white; cursor: pointer;">OK</button>
+                    </div>
+                </form>
+            `;
+
+            function cleanup() {
+                document.body.removeChild(overlay);
+                removeDialogState(dialogId);
+            }
+
+            dialog.querySelector('.cancelBtn').addEventListener('click', () => {
+                cleanup();
+                resolve(null);
+            });
+
+            dialog.querySelector('form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const values = {};
+                fields.forEach(field => {
+                    const input = document.getElementById(`${field.id}_${dialogId}`);
+                    values[field.id] = field.type === 'checkbox' ? input.checked : input.value;
+                });
+                cleanup();
+                resolve(values);
+            });
+
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+
+            saveDialogState(dialogId, {
+                type: 'prompt',
+                title,
+                fields,
+            });
+
+            dialog.querySelector('input').focus();
+
+            const handleEscape = (e) => {
+                if (e.key === 'Escape') {
+                    cleanup();
+                    resolve(null);
+                    document.removeEventListener('keydown', handleEscape);
+                }
+            };
+            document.addEventListener('keydown', handleEscape);
+        });
+    }
+
+    function createLinkDialog(groupIndex, existingDialogId = null) {
+        const dialogId = existingDialogId || 'link_dialog_' + Date.now();
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1999;
+        `;
+
+        const linkPrompt = document.createElement('div');
+        linkPrompt.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2c2c2c;
+            padding: 20px;
+            border-radius: 5px;
+            z-index: 2000;
+            width: 300px;
+            border: 1px solid #444;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        `;
+
+        linkPrompt.innerHTML = `
+            <form id="linkForm_${dialogId}">
+                <div style="margin-bottom: 10px;">
+                <label style="color: white; display: block; margin-bottom: 5px;">Link Name:</label>
+                    <input type="text" id="linkName_${dialogId}" style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label style="color: white; display: block; margin-bottom: 5px;">Link URL:</label>
+                    <input type="text" id="linkUrl_${dialogId}" style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label style="color: white; display: block; margin-bottom: 5px;">Emoji:</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="text" id="linkEmoji_${dialogId}" style="flex: 1; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;" placeholder="🔗">
+                        <div style="display: flex; gap: 5px;">
+                            <div class="emoji-button-container" style="position: relative;">
+                                <button type="button" class="emoji-lookup" style="padding: 5px 10px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer;">Emoji List</button>
+                                <div class="tooltip" style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; white-space: nowrap; display: none;">Opens Top Rated and Popular Unicode Emoji Site</div>
+                            </div>
+                            <div class="emoji-button-container" style="position: relative;">
+                                <button type="button" class="emoji-lookup-2" style="padding: 5px 10px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer;">Emoji List</button>
+                                <div class="tooltip" style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; white-space: nowrap; display: none;">Opens Top Rated and Popular Unicode Emoji Site</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="cancelBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #666; color: white; cursor: pointer;">Cancel</button>
+                    <button type="submit" style="padding: 5px 15px; border-radius: 3px; border: none; background: #4CAF50; color: white; cursor: pointer;">Add</button>
+                </div>
+            </form>
+        `;
+
+        // Add event listeners for emoji lookup buttons
+        linkPrompt.querySelectorAll('.emoji-button-container').forEach(container => {
+            const button = container.querySelector('button');
+            const tooltip = container.querySelector('.tooltip');
+
+            button.addEventListener('mouseover', () => {
+                tooltip.style.display = 'block';
+            });
+
+            button.addEventListener('mouseout', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+
+        // Add click handlers for emoji lookup
+        linkPrompt.querySelector('.emoji-lookup').addEventListener('click', () => {
+            window.open('http://xahlee.info/comp/unicode_index.html?q=', '_blank');
+        });
+
+        linkPrompt.querySelector('.emoji-lookup-2').addEventListener('click', () => {
+            window.open('https://emojipedia.org/unicode-8.0', '_blank');
+        });
+
+        function cleanup() {
+            document.body.removeChild(overlay);
+            document.body.removeChild(linkPrompt);
+            removeDialogState(dialogId);
+        }
+
+        const form = linkPrompt.querySelector(`#linkForm_${dialogId}`);
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById(`linkName_${dialogId}`).value;
+            const url = document.getElementById(`linkUrl_${dialogId}`).value || window.location.href;
+            const emoji = document.getElementById(`linkEmoji_${dialogId}`).value;
+
+            if (name && url) {
+                groups[groupIndex].links.push({
+                    name,
+                    url,
+                    emoji: emoji || '🔗'
+                });
+                saveState('sidebarGroups', groups);
+                refreshSidebar();
+            }
+            cleanup();
+        });
+
+        linkPrompt.querySelector('.cancelBtn').addEventListener('click', cleanup);
+
+        document.body.appendChild(overlay);
+        document.body.appendChild(linkPrompt);
+
+        saveDialogState(dialogId, {
+            type: 'link',
+            groupIndex,
+        });
+
+        document.getElementById(`linkName_${dialogId}`).focus();
+
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                cleanup();
+                document.removeEventListener('keydown', handleEscape);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+    }
+
+    async function createAllyEnemyDialog(listIndex, existingDialogId = null) {
+        return new Promise((resolve) => {
+            const dialogId = existingDialogId || 'dialog_' + Date.now();
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 2000;
+            `;
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: #2c2c2c;
+                padding: 20px;
+                border-radius: 5px;
+                min-width: 300px;
+                border: 1px solid #444;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            `;
+
+            dialog.innerHTML = `
+                <h3 style="color: white; margin: 0 0 15px 0;">Add Ally/Enemy</h3>
+                <form id="allyEnemyForm_${dialogId}">
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Name:</label>
+                        <input type="text" id="name_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Link:</label>
+                        <input type="text" id="link_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Emoji:</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="text" id="emoji_${dialogId}"
+                                style="flex: 1; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px; placeholder="🔗">
+                            <div style="display: flex; gap: 5px;">
+                                <div class="emoji-button-container" style="position: relative;">
+                                    <button type="button" class="emoji-lookup" style="padding: 5px 10px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer;">Emoji List</button>
+                                    <div class="tooltip" style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; white-space: nowrap; display: none;">Opens Top Rated and Popular Unicode Emoji Site</div>
+                                </div>
+                                <div class="emoji-button-container" style="position: relative;">
+                                    <button type="button" class="emoji-lookup-2" style="padding: 5px 10px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer;">Emoji List</button>
+                                    <div class="tooltip" style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; white-space: nowrap; display: none;">Opens Top Rated and Popular Unicode Emoji Site</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="cancelBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #666; color: white; cursor: pointer;">Cancel</button>
+                        <button type="submit" style="padding: 5px 15px; border-radius: 3px; border: none; background: #4CAF50; color: white; cursor: pointer;">Add</button>
+                    </div>
+                </form>
+            `;
+
+            // Add event listeners for emoji lookup buttons
+            dialog.querySelectorAll('.emoji-button-container').forEach(container => {
+                const button = container.querySelector('button');
+                const tooltip = container.querySelector('.tooltip');
+
+                button.addEventListener('mouseover', () => {
+                    tooltip.style.display = 'block';
+                });
+
+                button.addEventListener('mouseout', () => {
+                    tooltip.style.display = 'none';
+                });
+            });
+
+            // Add click handlers for emoji lookup
+            dialog.querySelector('.emoji-lookup').addEventListener('click', () => {
+                window.open('http://xahlee.info/comp/unicode_index.html?q=', '_blank');
+            });
+
+            dialog.querySelector('.emoji-lookup-2').addEventListener('click', () => {
+                window.open('https://emojipedia.org/unicode-8.0', '_blank');
+            });
+
+            function cleanup() {
+                document.body.removeChild(overlay);
+                removeDialogState(dialogId);
+            }
+
+            dialog.querySelector('.cancelBtn').addEventListener('click', () => {
+                cleanup();
+                resolve(null);
+            });
+
+            dialog.querySelector('form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const name = document.getElementById(`name_${dialogId}`).value;
+                const link = document.getElementById(`link_${dialogId}`).value;
+                const emoji = document.getElementById(`emoji_${dialogId}`).value || '🔗';
+
+                if (name && link) {
+                    cleanup();
+                    resolve({ name, link, emoji });
+                }
+            });
+
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+
+            saveDialogState(dialogId, {
+                type: 'allyEnemy',
+                listIndex,
+            });
+
+            dialog.querySelector('input').focus();
+
+            const handleEscape = (e) => {
+                if (e.key === 'Escape') {
+                    cleanup();
+                    resolve(null);
+                    document.removeEventListener('keydown', handleEscape);
+                }
+            };
+            document.addEventListener('keydown', handleEscape);
+        });
+    }
+
+    async function createLoanEntryDialog(existingDialogId = null) {
+        return new Promise((resolve) => {
+            const dialogId = existingDialogId || 'dialog_' + Date.now();
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 2000;
+            `;
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: #2c2c2c;
+                padding: 20px;
+                border-radius: 5px;
+                min-width: 300px;
+                border: 1px solid #444;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            `;
+
+            dialog.innerHTML = `
+                <h3 style="color: white; margin: 0 0 15px 0;">Add Loan Entry</h3>
+                <form id="loanEntryForm_${dialogId}">
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">User:</label>
+                        <input type="text" id="user_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Amount Owed:</label>
+                        <input type="number" id="amount_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="cancelBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #666; color: white; cursor: pointer;">Cancel</button>
+                        <button type="submit" style="padding: 5px 15px; border-radius: 3px; border: none; background: #4CAF50; color: white; cursor: pointer;">Add</button>
+                    </div>
+                </form>
+            `;
+
+            function cleanup() {
+                document.body.removeChild(overlay);
+                removeDialogState(dialogId);
+            }
+
+            dialog.querySelector('.cancelBtn').addEventListener('click', () => {
+                cleanup();
+                resolve(null);
+            });
+            dialog.querySelector('form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const user = document.getElementById(`user_${dialogId}`).value;
+                const amount = parseFloat(document.getElementById(`amount_${dialogId}`).value);
+
+                if (user && amount) {
+                    cleanup();
+                    resolve({ user, amount });
+                }
+            });
+
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+
+            saveDialogState(dialogId, {
+                type: 'loanEntry',
+            });
+
+            dialog.querySelector('input').focus();
+
+            const handleEscape = (e) => {
+                if (e.key === 'Escape') {
+                    cleanup();
+                    resolve(null);
+                    document.removeEventListener('keydown', handleEscape);
+                }
+            };
+            document.addEventListener('keydown', handleEscape);
+        });
+    }
+
+    async function createAuctionEntryDialog(existingDialogId = null) {
+        return new Promise((resolve) => {
+            const dialogId = existingDialogId || 'dialog_' + Date.now();
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 2000;
+            `;
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: #2c2c2c;
+                padding: 20px;
+                border-radius: 5px;
+                min-width: 300px;
+                border: 1px solid #444;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            `;
+
+            dialog.innerHTML = `
+                <h3 style="color: white; margin: 0 0 15px 0;">Add Auction Entry</h3>
+                <form id="auctionEntryForm_${dialogId}">
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Item:</label>
+                        <input type="text" id="item_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Seller:</label>
+                        <input type="text" id="seller_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: white; display: block; margin-bottom: 5px;">Time Left (minutes):</label>
+                        <input type="number" id="timeLeft_${dialogId}"
+                            style="width: 100%; padding: 5px; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="cancelBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #666; color: white; cursor: pointer;">Cancel</button>
+                        <button type="submit" style="padding: 5px 15px; border-radius: 3px; border: none; background: #4CAF50; color: white; cursor: pointer;">Add</button>
+                    </div>
+                </form>
+            `;
+
+            function cleanup() {
+                document.body.removeChild(overlay);
+                removeDialogState(dialogId);
+            }
+
+            dialog.querySelector('.cancelBtn').addEventListener('click', () => {
+                cleanup();
+                resolve(null);
+            });
+
+            dialog.querySelector('form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const item = document.getElementById(`item_${dialogId}`).value;
+                const seller = document.getElementById(`seller_${dialogId}`).value;
+                const timeLeft = parseInt(document.getElementById(`timeLeft_${dialogId}`).value);
+
+                if (item && seller && timeLeft) {
+                    cleanup();
+                    resolve({ item, seller, timeLeft });
+                }
+            });
+
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+
+            saveDialogState(dialogId, {
+                type: 'auctionEntry',
+            });
+
+            dialog.querySelector('input').focus();
+
+            const handleEscape = (e) => {
+                if (e.key === 'Escape') {
+                    cleanup();
+                    resolve(null);
+                    document.removeEventListener('keydown', handleEscape);
+                }
+            };
+            document.addEventListener('keydown', handleEscape);
+        });
+    }
+
+    // ==================== Todo List Functions ====================
+
+    async function addTodoList() {
+        const result = await createPromptDialog('Add Todo List', [
+            { id: 'listName', label: 'List Name', type: 'text' },
+            { id: 'resetDaily', label: 'Reset Daily?', type: 'checkbox' }
+        ]);
+
+        if (result && result.listName) {
+            const newTodoList = {
+                name: result.listName,
+                items: [],
+                resetDaily: result.resetDaily,
+                position: { x: 0, y: 0 },
+                size: { width: 200, height: 'auto' }
+            };
+
+            todoLists.push(newTodoList);
+            saveState('todoLists', todoLists);
+
+            if (newTodoList.resetDaily) {
+                setupDailyReset(todoLists.length - 1);
+            }
+
+            refreshSidebar();
+        }
+    }
+
+    function setupDailyReset(listIndex) {
+        setInterval(() => {
+            const now = new Date();
+            const utcHour = now.getUTCHours();
+            const utcMinute = now.getUTCMinutes();
+
+            // Check if it's midnight UTC (Torn City time)
+            if (utcHour === 0 && utcMinute === 0) {
+                const list = todoLists[listIndex];
+                if (list && list.items) {
+                    list.items = list.items.map(item => ({...item, checked: false}));
+                    saveState('todoLists', todoLists);
+                    refreshSidebar();
+                }
+            }
+        }, 60000); // Check every minute
+    }
+
+    async function addTodoItem(listIndex) {
+        const result = await createPromptDialog('Add Todo Item', [
+            { id: 'itemName', label: 'Task Name', type: 'text' },
+            { id: 'itemUrl', label: 'Link (Optional)', type: 'text' },
+            { id: 'itemEmoji', label: 'Emoji (Optional)', type: 'text' }
+        ]);
+
+        if (result && result.itemName) {
+            const list = todoLists[listIndex];
+            list.items.push({
+                name: result.itemName,
+                url: result.itemUrl || '',
+                emoji: result.itemEmoji || '✅',
+                checked: false
+            });
+            saveState('todoLists', todoLists);
+            refreshSidebar();
+        }
+    }
+
+    function createTodoListElement(list, index) {
+        const todoListDiv = document.createElement('div');
+        todoListDiv.className = 'draggable';
+        todoListDiv.dataset.type = 'todoList';
+        todoListDiv.dataset.index = index;
+        todoListDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0f0f0' : '#333333'};
+            padding: 10px;
+            border: 1px solid ${isLightMode ? '#cccccc' : '#444444'};
+            border-radius: 5px;
+            position: absolute;
+            width: ${list.size?.width || 200}px;
+            height: ${list.size?.height || 'auto'};
+            left: ${list.position?.x || 0}px;
+            top: ${list.position?.y || 0}px;
+            ${isEditMode ? 'cursor: move;' : ''}
+        `;
+
+        const header = document.createElement('div');
+        header.style.cssText = `
+            color: ${isLightMode ? '#000000' : 'white'};
+            font-size: 16px;
+            padding: 5px;
+            background-color: ${isLightMode ? '#e0e0e0' : '#444444'};
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        `;
+        header.textContent = list.name;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+        const minimizeButton = toggleMinimize(todoListDiv, null, isElementMinimized('todoList', index));
+        buttonContainer.appendChild(minimizeButton);
+
+        const addItemButton = document.createElement('button');
+        addItemButton.textContent = '+';
+        addItemButton.className = 'no-drag';
+        addItemButton.style.cssText = `
+            background-color: #336633;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+        `;
+        addItemButton.addEventListener('click', () => addTodoItem(index));
+        buttonContainer.appendChild(addItemButton);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this todo list?', () => {
+                    todoLists.splice(index, 1);
+                    saveState('todoLists', todoLists);
+                    refreshSidebar();
+                });
+            });
+            buttonContainer.appendChild(deleteButton);
+        }
+
+        header.appendChild(buttonContainer);
+        todoListDiv.appendChild(header);
+
+        const itemsContainer = document.createElement('div');
+        itemsContainer.className = 'content-container';
+        itemsContainer.style.cssText = `
+            display: ${isElementMinimized('todoList', index) ? 'none' : 'flex'};
+            flex-direction: column;
+            gap: 5px;
+        `;
+
+        list.items?.forEach((item, itemIndex) => {
+            const itemDiv = document.createElement('div');
+            itemDiv.style.cssText = `
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                padding: 5px;
+                background-color: ${isLightMode ? '#ffffff' : '#404040'};
+                border-radius: 3px;
+            `;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = item.checked;
+            checkbox.style.cursor = 'pointer';
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    item.checked = true;
+                    if (!list.resetDaily) {
+                        setTimeout(() => {
+                            list.items.splice(itemIndex, 1);
+                            saveState('todoLists', todoLists);
+                            refreshSidebar();
+                        }, 1000);
+                    } else {
+                        itemText.style.opacity = '0.5';
+                        itemText.style.textDecoration = 'line-through';
+                    }
+                } else {
+                    // Show confirmation dialog for unchecking
+                    confirmDelete('Are you sure you want to uncheck this task?', () => {
+                        item.checked = false;
+                        itemText.style.opacity = '1';
+                        itemText.style.textDecoration = 'none';
+                        saveState('todoLists', todoLists);
+                        refreshSidebar();
+                    });
+                    checkbox.checked = true; // Keep checked until confirmed
+                }
+                saveState('todoLists', todoLists);
+            });
+
+            const itemText = document.createElement('span');
+            itemText.textContent = `${item.emoji || '✅'} ${item.name}`;
+            itemText.style.cssText = `
+                color: ${isLightMode ? '#000000' : 'white'};
+                flex-grow: 1;
+                text-decoration: ${item.checked ? 'line-through' : 'none'};
+                cursor: ${item.url ? 'pointer' : 'default'};
+            `;
+
+            if (item.url) {
+                itemText.addEventListener('click', () => {
+                    window.location.href = item.url;
+                });
+            }
+
+            if (isDeleteMode) {
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = '✕';
+                deleteButton.className = 'no-drag';
+                deleteButton.style.cssText = `
+                    background-color: #cc3333;
+                    color: white;
+                    border: none;
+                    padding: 2px 6px;
+                    cursor: pointer;
+                    border-radius: 3px;
+                `;
+                deleteButton.addEventListener('click', () => {
+                    confirmDelete('Delete this To-Do List Task?', () => {
+                        list.items.splice(itemIndex, 1);
+                        saveState('todoLists', todoLists);
+                        refreshSidebar();
+                    });
+                });
+                itemDiv.appendChild(deleteButton);
+            }
+            itemDiv.appendChild(checkbox);
+            itemDiv.appendChild(itemText);
+            itemsContainer.appendChild(itemDiv);
+        });
+
+        todoListDiv.appendChild(itemsContainer);
+
+        if (isEditMode) {
+            const resizer = createResizer(todoListDiv, (width, height) => {
+                list.size = { width, height };
+                saveState('todoLists', todoLists);
+            });
+            todoListDiv.appendChild(resizer);
+        }
+
+        return todoListDiv;
+    }
+
+    // Update the showAddMenu function
+    function showAddMenu(event) {
+        const existingMenu = document.getElementById('addMenu');
+        if (existingMenu) {
+            existingMenu.remove();
+            return;
+        }
+
+        const menu = document.createElement('div');
+        menu.id = 'addMenu';
+        menu.style.cssText = `
+            position: absolute;
+            top: 50px;
+            right: 10px;
+            background-color: ${isLightMode ? '#f0f0f0' : '#2c2c2c'};
+            border: 1px solid ${isLightMode ? '#cccccc' : '#444'};
+            border-radius: 4px;
+            padding: 5px;
+            z-index: 1200;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        `;
+
+        const options = [
+            { text: 'Add Group', action: addGroup },
+            { text: 'Add Notepad', action: addNotepad },
+            { text: 'Add Attack List', action: addAttackList },
+            { text: 'Add Todo List', action: addTodoList },
+            { text: 'Add Ally/Enemy List', action: addAllyEnemyList },
+            { text: 'Add Loan Tracker', action: addLoanTracker },
+            { text: 'Add Auction Tracker', action: addAuctionTracker }
+        ];
+
+        options.forEach(option => {
+            const button = document.createElement('button');
+            button.textContent = option.text;
+            button.style.cssText = `
+                display: block;
+                width: 100%;
+                padding: 8px;
+                margin: 2px 0;
+                background-color: ${isLightMode ? '#ffffff' : '#1a1a1a'};
+                color: ${isLightMode ? '#000000' : 'white'};
+                border: 1px solid ${isLightMode ? '#cccccc' : '#444'};
+                cursor: pointer;
+                text-align: left;
+                border-radius: 3px;
+                transition: background-color 0.2s ease;
+            `;
+            button.addEventListener('mouseover', () => {
+                button.style.backgroundColor = isLightMode ? '#e0e0e0' : '#2a2a2a';
+            });
+            button.addEventListener('mouseout', () => {
+                button.style.backgroundColor = isLightMode ? '#ffffff' : '#1a1a1a';
+            });
+            button.addEventListener('click', () => {
+                option.action();
+                menu.remove();
+            });
+            menu.appendChild(button);
+        });
+
+        document.querySelector('#topBar').appendChild(menu);
+
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target) && e.target.id !== 'addButton') {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        };
+
+        setTimeout(() => {
+            document.addEventListener('click', closeMenu);
+        }, 0);
+    }
+
+    // Update the createResizer function to work with light mode
+    function createResizer(element, onResize) {
+        const resizer = document.createElement('div');
+        resizer.setAttribute('data-resizer', 'true');
+        resizer.style.cssText = `
+            width: 20px;
+            height: 20px;
+            background-color: ${isLightMode ? '#999' : '#666'};
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            cursor: se-resize;
+            border-radius: 0 0 5px 0;
+            display: ${isEditMode ? 'flex' : 'none'};
+            align-items: center;
+            justify-content: center;
+            color: ${isLightMode ? '#fff' : '#fff'};
+            font-size: 12px;
+            transition: background-color 0.2s;
+            z-index: 10;
+        `;
+        resizer.innerHTML = '⮧';
+
+        let isResizing = false;
+        let startWidth, startHeight;
+
+        const startResize = (e) => {
+            if (!isEditMode) return;
+            isResizing = true;
+            startWidth = element.offsetWidth;
+            startHeight = element.offsetHeight;
+            e.stopPropagation();
+        };
+
+        const doResize = (e) => {
+            if (!isResizing) return;
+            e.preventDefault();
+
+            const container = document.getElementById('groupContainer');
+            const maxWidth = Math.min(400, container.offsetWidth - 20);
+            const maxHeight = container.offsetHeight - 20;
+
+            const deltaX = e.clientX - (element.getBoundingClientRect().left + startWidth);
+            const deltaY = e.clientY - (element.getBoundingClientRect().top + startHeight);
+
+            const newWidth = Math.min(maxWidth, Math.max(180, startWidth + deltaX));
+            const newHeight = Math.min(maxHeight, Math.max(100, startHeight + deltaY));
+
+            element.style.width = `${newWidth}px`;
+            element.style.height = `${newHeight}px`;
+            onResize && onResize(newWidth, newHeight);
+        };
+
+        const stopResize = () => {
+            isResizing = false;
+        };
+
+        resizer.addEventListener('mousedown', startResize);
+        document.addEventListener('mousemove', doResize);
+        document.addEventListener('mouseup', stopResize);
+
+        resizer.addEventListener('mouseover', () => {
+            if (isEditMode) {
+                resizer.style.backgroundColor = isLightMode ? '#aaa' : '#777';
+            }
+        });
+
+        resizer.addEventListener('mouseout', () => {
+            resizer.style.backgroundColor = isLightMode ? '#999' : '#666';
+        });
+
+        return resizer;
+    }
+
+    // Update toggleMinimize function to support light mode
+    function toggleMinimize(container, contentDiv, initialIsMinimized) {
+        const minimizeButton = document.createElement('button');
+        minimizeButton.textContent = initialIsMinimized ? '▼' : '▲';
+        minimizeButton.className = 'no-drag minimize-button';
+        minimizeButton.style.cssText = `
+            background: none;
+            border: none;
+            color: ${isLightMode ? '#000000' : 'white'};
+            padding: 0 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: transform 0.2s ease;
+            z-index: 2;
+        `;
+
+        let isMinimized = initialIsMinimized;
+        const contentElement = contentDiv || container.querySelector('.content-container');
+
+        if (contentElement) {
+            contentElement.style.display = isMinimized ? 'none' : 'flex';
+            if (isMinimized) {
+                container.style.height = 'auto';
+            }
+        }
+
+        const updateMinimizeState = () => {
+            isMinimized = !isMinimized;
+            minimizeButton.textContent = isMinimized ? '▼' : '▲';
+
+            if (contentElement) {
+                contentElement.style.display = isMinimized ? 'none' : 'flex';
+                container.style.height = isMinimized ? 'auto' : container.getAttribute('data-full-height') || 'auto';
+            }
+
+            if (container.dataset.type && container.dataset.index !== undefined) {
+                saveMinimizeState(container.dataset.type, container.dataset.index, isMinimized);
+            }
+        };
+
+        minimizeButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            updateMinimizeState();
+        });
+
+        minimizeButton.addEventListener('mouseover', () => {
+            minimizeButton.style.transform = 'scale(1.2)';
+        });
+
+        minimizeButton.addEventListener('mouseout', () => {
+            minimizeButton.style.transform = 'scale(1)';
+        });
+
+        return minimizeButton;
+    }
+
+    // Animation utility function
+    function preserveSidebarAnimation() {
+        const sidebar = document.getElementById('customSidebar');
+        const toggleButton = document.getElementById('toggleButton');
+
+        if (sidebar && toggleButton) {
+            const currentTransform = window.getComputedStyle(sidebar).transform;
+            const isHidden = currentTransform.includes('-102') || currentTransform.includes('matrix');
+
+            // Ensure transition property is set
+            sidebar.style.transition = 'transform 0.3s ease-in-out';
+            toggleButton.style.transition = 'transform 0.3s ease-in-out, background-color 0.2s ease';
+
+            // Store current state
+            saveState('sidebarHidden', isHidden);
+        }
+    }
+
+    // Add this to your top bar button click events
+    function handleModeToggle(mode) {
+        preserveSidebarAnimation();
+        if (mode === 'edit') {
+            toggleEditMode();
+        } else if (mode === 'delete') {
+            toggleDeleteMode();
+        }
+    }
+
+    // Utility function to update element colors based on light mode
+    function updateElementColors(element) {
+        if (isLightMode) {
+            element.style.backgroundColor = '#ffffff';
+            element.style.color = '#000000';
+            element.style.borderColor = '#cccccc';
+        } else {
+            element.style.backgroundColor = '#1a1a1a';
+            element.style.color = 'white';
+            element.style.borderColor = '#444444';
+        }
+    }
+
+    // Function to handle todo list reset checks
+    function checkTodoListResets() {
+        const now = new Date();
+        const utcHour = now.getUTCHours();
+        const utcMinute = now.getUTCMinutes();
+
+        if (utcHour === 0 && utcMinute === 0) {
+            todoLists.forEach((list, index) => {
+                if (list.resetDaily) {
+                    list.items = list.items.map(item => ({...item, checked: false}));
+                }
+            });
+            saveState('todoLists', todoLists);
+            refreshSidebar();
+        }
+    }
+
+    // Start the reset check interval
+    setInterval(checkTodoListResets, 60000); // Check every minute
+
+    // Update createGroupElement function to support light mode
+    function createGroupElement(group, index) {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'draggable';
+        groupDiv.dataset.type = 'group';
+        groupDiv.dataset.index = index;
+        groupDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0f0f0' : '#2c2c2c'};
+            padding: 10px;
+            border: 1px solid ${isLightMode ? '#cccccc' : '#444'};
+            border-radius: 5px;
+            position: absolute;
+            width: ${group.size?.width || 180}px;
+            height: ${group.size?.height || 'auto'};
+            left: ${group.position?.x || 0}px;
+            top: ${group.position?.y || 0}px;
+            ${isEditMode ? 'cursor: move;' : ''}
+        `;
+
+        const header = document.createElement('div');
+        header.style.cssText = `
+            color: ${isLightMode ? '#000000' : 'white'};
+            font-size: 16px;
+            padding: 5px;
+            background-color: ${isLightMode ? '#888888' : '#3c3c3c'};
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        `;
+        header.textContent = group.name;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+        const minimizeButton = toggleMinimize(groupDiv, null, isElementMinimized('group', index));
+        const addLinkButton = document.createElement('button');
+        addLinkButton.textContent = '+';
+        addLinkButton.className = 'no-drag';
+        addLinkButton.style.cssText = `
+            background-color: #336633;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+        `;
+        addLinkButton.addEventListener('click', () => {
+            preserveSidebarAnimation();
+            addLink(index);
+        });
+
+        buttonContainer.appendChild(minimizeButton);
+        buttonContainer.appendChild(addLinkButton);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+                margin-left: 5px;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this group?', () => {
+                    groups.splice(index, 1);
+                    saveState('sidebarGroups', groups);
+                    refreshSidebar();
+                });
+            });
+            buttonContainer.appendChild(deleteButton);
+        }
+
+        header.appendChild(buttonContainer);
+        groupDiv.appendChild(header);
+
+        const linksContainer = document.createElement('div');
+        linksContainer.className = 'content-container';
+        linksContainer.style.cssText = `
+            display: ${isElementMinimized('group', index) ? 'none' : 'flex'};
+            flex-direction: column;
+            gap: 2px;
+        `;
+
+        group.links?.forEach((link, linkIndex) => {
+            const linkButton = document.createElement('div');
+            linkButton.className = 'no-drag';
+            linkButton.style.cssText = `
+                background-color: ${isLightMode ? '#ffffff' : '#444'};
+                color: ${isLightMode ? '#0066cc' : '#8cb3d9'};
+                border: 1px solid ${isLightMode ? '#dddddd' : '#555'};
+                padding: 3px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            `;
+
+            const linkText = document.createElement('span');
+            linkText.textContent = `${link.emoji || '🔗'} ${link.name}`;
+            linkButton.appendChild(linkText);
+
+            const buttonWrapper = document.createElement('div');
+            buttonWrapper.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+            if (isEditMode) {
+                const moveButtons = createLinkMoveButtons(index, linkIndex, group.links.length);
+                buttonWrapper.appendChild(moveButtons);
+            }
+
+            if (isDeleteMode) {
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = '✕';
+                deleteButton.className = 'no-drag';
+                deleteButton.style.cssText = `
+                    background-color: #cc3333;
+                    color: white;
+                    border: none;
+                    padding: 2px 6px;
+                    cursor: pointer;
+                    border-radius: 3px;
+                `;
+                deleteButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    confirmDelete('Delete this link?', () => {
+                        group.links.splice(linkIndex, 1);
+                        saveState('sidebarGroups', groups);
+                        refreshSidebar();
+                    });
+                });
+                buttonWrapper.appendChild(deleteButton);
+            }
+
+            linkButton.appendChild(buttonWrapper);
+            linkButton.addEventListener('click', () => {
+                window.location.href = link.url;
+            });
+
+            linksContainer.appendChild(linkButton);
+        });
+
+        groupDiv.appendChild(linksContainer);
+
+        if (isEditMode) {
+            const resizer = createResizer(groupDiv, (width, height) => {
+                group.size = { width, height };
+                saveState('sidebarGroups', groups);
+            });
+            groupDiv.appendChild(resizer);
+        }
+
+        return groupDiv;
+    }
+
+    // Updated refreshSidebar function
+    function refreshSidebar() {
+        const groupContainer = document.getElementById('groupContainer');
+        if (!groupContainer) return;
+
+        groupContainer.innerHTML = '';
+
+        groups.forEach((group, index) => {
+            const groupDiv = createGroupElement(group, index);
+            groupContainer.appendChild(groupDiv);
+        });
+
+        notepads.forEach((notepad, index) => {
+            const notepadDiv = createNotepadElement(notepad, index);
+            groupContainer.appendChild(notepadDiv);
+        });
+
+        attackLists.forEach((list, index) => {
+            const attackListDiv = createAttackListElement(list, index);
+            groupContainer.appendChild(attackListDiv);
+        });
+
+        todoLists.forEach((list, index) => {
+            const todoListDiv = createTodoListElement(list, index);
+            groupContainer.appendChild(todoListDiv);
+        });
+
+        allyEnemyLists.forEach((list, index) => {
+            const allyEnemyListDiv = createAllyEnemyListElement(list, index);
+            groupContainer.appendChild(allyEnemyListDiv);
+        });
+
+        if (loanTracker.entries.length > 0 || isEditMode) {
+            const loanTrackerDiv = createLoanTrackerElement();
+            groupContainer.appendChild(loanTrackerDiv);
+        }
+
+        if (auctionTracker.auctions.length > 0 || isEditMode) {
+            const auctionTrackerDiv = createAuctionTrackerElement();
+            groupContainer.appendChild(auctionTrackerDiv);
+        }
+    }
+
+    function createLinkMoveButtons(groupIndex, linkIndex, totalLinks) {
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 3px;
+            margin-left: 5px;
+        `;
+
+        if (linkIndex > 0) {
+            const upButton = document.createElement('button');
+            upButton.innerHTML = '↑';
+            upButton.className = 'no-drag';
+            upButton.style.cssText = `
+                background: none;
+                border: none;
+                color: ${isLightMode ? '#000000' : 'white'};
+                cursor: pointer;
+                padding: 0 2px;
+                font-size: 12px;
+                font-weight: bold;
+                transition: transform 0.2s;
+            `;
+            upButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveLink(groupIndex, linkIndex, linkIndex - 1);
+            });
+            upButton.addEventListener('mouseover', () => {
+                upButton.style.transform = 'scale(1.2)';
+            });
+            upButton.addEventListener('mouseout', () => {
+                upButton.style.transform = 'scale(1)';
+            });
+            buttonContainer.appendChild(upButton);
+        }
+
+        if (linkIndex < totalLinks - 1) {
+            const downButton = document.createElement('button');
+            downButton.innerHTML = '↓';
+            downButton.className = 'no-drag';
+            downButton.style.cssText = `
+                background: none;
+                border: none;
+                color: ${isLightMode ? '#000000' : 'white'};
+                cursor: pointer;
+                padding: 0 2px;
+                font-size: 12px;
+                font-weight: bold;
+                transition: transform 0.2s;
+            `;
+            downButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveLink(groupIndex, linkIndex, linkIndex + 1);
+            });
+            downButton.addEventListener('mouseover', () => {
+                downButton.style.transform = 'scale(1.2)';
+            });
+            downButton.addEventListener('mouseout', () => {
+                downButton.style.transform = 'scale(1)';
+            });
+            buttonContainer.appendChild(downButton);
+        }
+
+        return buttonContainer;
+    }
+
+    function confirmDelete(message, callback) {
+        preserveSidebarAnimation();
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #2c2c2c;
+            padding: 20px;
+            border-radius: 5px;
+            min-width: 300px;
+            border: 1px solid #444;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            color: white;
+        `;
+
+        dialog.innerHTML = `
+            <p style="margin: 0 0 20px 0;">${message}</p>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="cancelBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #666; color: white; cursor: pointer;">Cancel</button>
+                <button class="confirmBtn" style="padding: 5px 15px; border-radius: 3px; border: none; background: #cc3333; color: white; cursor: pointer;">Yes, Delete</button>
+            </div>
+        `;
+
+        function cleanup() {
+            document.body.removeChild(overlay);
+        }
+
+        dialog.querySelector('.cancelBtn').addEventListener('click', cleanup);
+        dialog.querySelector('.confirmBtn').addEventListener('click', () => {
+            cleanup();
+            callback();
+        });
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                cleanup();
+                document.removeEventListener('keydown', handleEscape);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+    }
+
+    // Add the moveLink function
+    function moveLink(groupIndex, fromIndex, toIndex) {
+        const links = groups[groupIndex].links;
+        const [movedLink] = links.splice(fromIndex, 1);
+        links.splice(toIndex, 0, movedLink);
+        saveState('sidebarGroups', groups);
+        refreshSidebar();
+    }
+
+    // Add item creation functions
+    async function addGroup() {
+        const result = await createPromptDialog('Add Group', [
+            { id: 'groupName', label: 'Group Name', type: 'text' }
+        ]);
+
+        if (result && result.groupName) {
+            const newGroup = {
+                name: result.groupName,
+                links: [],
+                position: { x: 0, y: 0 },
+                size: { width: 180, height: 'auto' }
+            };
+            groups.push(newGroup);
+            saveState('sidebarGroups', groups);
+            refreshSidebar();
+        }
+    }
+
+    async function addNotepad() {
+        const result = await createPromptDialog('Add Notepad', [
+            { id: 'notepadName', label: 'Notepad Name', type: 'text' }
+        ]);
+
+        if (result && result.notepadName) {
+            notepads.push({
+                name: result.notepadName,
+                content: '',
+                position: { x: 0, y: 0 },
+                size: { width: 200, height: 150 }
+            });
+            saveState('sidebarNotepads', notepads);
+            refreshSidebar();
+        }
+    }
+
+    async function addAttackList() {
+        const result = await createPromptDialog('Add Attack List', [
+            { id: 'listName', label: 'List Name', type: 'text' }
+        ]);
+
+        if (result && result.listName) {
+            attackLists.push({
+                name: result.listName,
+                targets: [],
+                attackUrl: 'https://www.torn.com/loader.php?sid=attack&user2ID=',
+                position: { x: 0, y: 0 },
+                size: { width: 200, height: 'auto' }
+            });
+            saveState('attackLists', attackLists);
+            refreshSidebar();
+        }
+    }
+
+    async function addAllyEnemyList() {
+        const result = await createPromptDialog('Add Ally/Enemy List', [
+            { id: 'listName', label: 'List Name', type: 'text' }
+        ]);
+
+        if (result && result.listName) {
+            const newList = {
+                name: result.listName,
+                allies: [],
+                enemies: [],
+                position: { x: 0, y: 0 },
+                size: { width: 200, height: 'auto' }
+            };
+
+            allyEnemyLists.push(newList);
+            saveState('allyEnemyLists', allyEnemyLists);
+            refreshSidebar();
+        }
+    }
+
+    async function addLoanTracker() {
+        if (!loanTracker.position) {
+            loanTracker.position = { x: 0, y: 0 };
+            loanTracker.size = { width: 200, height: 'auto' };
+            saveState('loanTracker', loanTracker);
+        }
+        refreshSidebar();
+    }
+
+    async function addLoanEntry(user, amount) {
+        loanTracker.entries.push({ user, amount });
+        saveState('loanTracker', loanTracker);
+        refreshSidebar();
+    }
+
+    async function addAuctionTracker() {
+        if (!auctionTracker.position) {
+            auctionTracker.position = { x: 0, y: 0 };
+            auctionTracker.size = { width: 200, height: 'auto' };
+            saveState('auctionTracker', auctionTracker);
+        }
+        refreshSidebar();
+    }
+
+    async function addAuctionEntry(item, seller, timeLeft) {
+        auctionTracker.auctions.push({ item, seller, timeLeft });
+        saveState('auctionTracker', auctionTracker);
+        refreshSidebar();
+    }
+
+    function addLink(groupIndex) {
+        createLinkDialog(groupIndex);
+    }
+
+    function createNotepadElement(notepad, index) {
+        const notepadDiv = document.createElement('div');
+        notepadDiv.className = 'draggable';
+        notepadDiv.dataset.type = 'notepad';
+        notepadDiv.dataset.index = index;
+        notepadDiv.style.cssText = `
+            background-color: ${isLightMode ? '#e6f3f3' : '#1f3333'};
+            padding: 10px;
+            border: 1px solid ${isLightMode ? '#cce6e6' : '#446666'};
+            border-radius: 5px;
+            position: absolute;
+            width: ${notepad.size?.width || 200}px;
+            height: ${notepad.size?.height || 150}px;
+            left: ${notepad.position?.x || 0}px;
+            top: ${notepad.position?.y || 0}px;
+            ${isEditMode ? 'cursor: move;' : ''}
+        `;
+
+        const header = document.createElement('div');
+        header.style.cssText = `
+            color: ${isLightMode ? '#000000' : 'white'};
+            font-size: 16px;
+            padding: 5px;
+            background-color: ${isLightMode ? '#d9ebeb' : '#2a4444'};
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        `;
+        header.textContent = notepad.name;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+        const minimizeButton = toggleMinimize(notepadDiv, null, isElementMinimized('notepad', index));
+        buttonContainer.appendChild(minimizeButton);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this notepad?', () => {
+                    notepads.splice(index, 1);
+                    saveState('sidebarNotepads', notepads);
+                    refreshSidebar();
+                });
+            });
+            buttonContainer.appendChild(deleteButton);
+        }
+
+        header.appendChild(buttonContainer);
+        notepadDiv.appendChild(header);
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'no-drag content-container';
+        textarea.value = notepad.content || '';
+        textarea.style.cssText = `
+            width: 100%;
+            height: calc(100% - 40px);
+            background-color: ${isLightMode ? '#f0f7f7' : '#264040'};
+            color: ${isLightMode ? '#000000' : 'white'};
+            border: 1px solid ${isLightMode ? '#cce6e6' : '#446666'};
+            resize: none;
+            padding: 5px;
+            display: ${isElementMinimized('notepad', index) ? 'none' : 'block'};
+            font-family: monospace;
+        `;
+        textarea.addEventListener('input', (e) => {
+            notepad.content = e.target.value;
+            saveState('sidebarNotepads', notepads);
+        });
+
+        notepadDiv.appendChild(textarea);
+
+        if (isEditMode) {
+            const resizer = createResizer(notepadDiv, (width, height) => {
+                notepad.size = { width, height };
+                saveState('sidebarNotepads', notepads);
+            });
+            notepadDiv.appendChild(resizer);
+        }
+
+        return notepadDiv;
+    }async function addTarget(list, index) {
+    const result = await createPromptDialog('Add Target', [
+        { id: 'targetName', label: 'Target Name', type: 'text' },
+        { id: 'targetId', label: 'Player ID', type: 'text' }
+    ]);
+
+    if (result && result.targetName && result.targetId) {
+        try {
+            const targetId = parseInt(result.targetId);
+            if (isNaN(targetId)) {
+                throw new Error('Invalid Player ID');
+            }
+
+            list.targets.push({
+                name: result.targetName,
+                id: targetId
+            });
+            saveState('attackLists', attackLists);
+            refreshSidebar();
+        } catch (error) {
+            alert('Please enter a valid Player ID');
+        }
+    }
+}
+
+function createAttackListElement(list, index) {
+    const attackListDiv = document.createElement('div');
+    attackListDiv.className = 'draggable';
+    attackListDiv.dataset.type = 'attackList';
+    attackListDiv.dataset.index = index;
+    attackListDiv.style.cssText = `
+        background-color: ${isLightMode ? '#f7e6e6' : '#331f1f'};
+        padding: 10px;
+        border: 1px solid ${isLightMode ? '#e6cccc' : '#664444'};
+        border-radius: 5px;
+        position: absolute;
+        width: ${list.size?.width || 200}px;
+        height: ${list.size?.height || 'auto'};
+        left: ${list.position?.x || 0}px;
+        top: ${list.position?.y || 0}px;
+        ${isEditMode ? 'cursor: move;' : ''}
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+        color: ${isLightMode ? '#000000' : 'white'};
+        font-size: 16px;
+        padding: 5px;
+        background-color: ${isLightMode ? '#ebd9d9' : '#442a2a'};
+        border-radius: 3px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    `;
+    header.textContent = list.name;
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+    const minimizeButton = toggleMinimize(attackListDiv, null, isElementMinimized('attackList', index));
+    buttonContainer.appendChild(minimizeButton);
+
+    const addTargetButton = document.createElement('button');
+    addTargetButton.textContent = '+';
+    addTargetButton.className = 'no-drag';
+    addTargetButton.style.cssText = `
+        background-color: #336633;
+        color: white;
+        border: none;
+        padding: 2px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+    `;
+    addTargetButton.addEventListener('click', () => addTarget(list, index));
+    buttonContainer.appendChild(addTargetButton);
+
+    if (isDeleteMode) {
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = '✕';
+        deleteButton.className = 'no-drag';
+        deleteButton.style.cssText = `
+            background-color: #cc3333;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+        `;
+        deleteButton.addEventListener('click', () => {
+            confirmDelete('Delete this attack list?', () => {
+                attackLists.splice(index, 1);
+                saveState('attackLists', attackLists);
+                refreshSidebar();
+            });
+        });
+        buttonContainer.appendChild(deleteButton);
+    }
+
+    header.appendChild(buttonContainer);
+    attackListDiv.appendChild(header);
+
+    const targetsContainer = document.createElement('div');
+    targetsContainer.className = 'content-container';
+    targetsContainer.style.cssText = `
+        display: ${isElementMinimized('attackList', index) ? 'none' : 'flex'};
+        flex-direction: column;
+        gap: 2px;
+        margin-top: 10px;
+    `;
+
+    list.targets?.forEach((target, targetIndex) => {
+        const targetDiv = document.createElement('div');
+        targetDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0e6e6' : '#442222'};
+            padding: 4px 8px;
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        `;
+
+        const targetName = document.createElement('span');
+        targetName.textContent = target.name;
+        targetName.style.cssText = `color: ${isLightMode ? '#000000' : 'white'};`;
+        targetDiv.appendChild(targetName);
+
+        const buttonWrapper = document.createElement('div');
+        buttonWrapper.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+        const attackButton = document.createElement('button');
+        attackButton.innerHTML = '⚔️';
+        attackButton.className = 'no-drag';
+        attackButton.style.cssText = 'background: none; border: none; cursor: pointer; padding: 0 3px;';
+        attackButton.addEventListener('click', () => {
+            window.location.href = `${list.attackUrl}${target.id}`;
+        });
+        buttonWrapper.appendChild(attackButton);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this target?', () => {
+                    list.targets.splice(targetIndex, 1);
+                    saveState('attackLists', attackLists);
+                    refreshSidebar();
+                });
+            });
+            buttonWrapper.appendChild(deleteButton);
+        }
+
+        targetDiv.appendChild(buttonWrapper);
+        targetsContainer.appendChild(targetDiv);
+    });
+
+    attackListDiv.appendChild(targetsContainer);
+
+    if (isEditMode) {
+        const resizer = createResizer(attackListDiv, (width, height) => {
+            list.size = { width, height };
+            saveState('attackLists', attackLists);
+        });
+        attackListDiv.appendChild(resizer);
+    }
+
+    return attackListDiv;
+}
+
+async function addAllyOrEnemy(listIndex, type) {
+    const result = await createAllyEnemyDialog(listIndex);
+
+    if (result) {
+        const list = allyEnemyLists[listIndex];
+        list[type].push(result);
+        saveState('allyEnemyLists', allyEnemyLists);
+        refreshSidebar();
+    }
+}
+
+function createAllyEnemyListElement(list, index) {
+    const allyEnemyListDiv = document.createElement('div');
+    allyEnemyListDiv.className = 'draggable';
+    allyEnemyListDiv.dataset.type = 'allyEnemyList';
+    allyEnemyListDiv.dataset.index = index;
+    allyEnemyListDiv.style.cssText = `
+        background-color: ${isLightMode ? '#f0f0f0' : '#333333'};
+        padding: 10px;
+        border: 1px solid ${isLightMode ? '#cccccc' : '#444444'};
+        border-radius: 5px;
+        position: absolute;
+        width: ${list.size?.width || 200}px;
+        height: ${list.size?.height || 'auto'};
+        left: ${list.position?.x || 0}px;
+        top: ${list.position?.y || 0}px;
+        ${isEditMode ? 'cursor: move;' : ''}
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+        color: ${isLightMode ? '#000000' : 'white'};
+        font-size: 16px;
+        padding: 5px;
+        background-color: ${isLightMode ? '#e0e0e0' : '#444444'};
+        border-radius: 3px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    `;
+    header.textContent = list.name;
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+    const minimizeButton = toggleMinimize(allyEnemyListDiv, null, isElementMinimized('allyEnemyList', index));
+    buttonContainer.appendChild(minimizeButton);
+
+    const addAllyButton = document.createElement('button');
+    addAllyButton.textContent = '+ Ally';
+    addAllyButton.className = 'no-drag';
+    addAllyButton.style.cssText = `
+        background-color: #336633;
+        color: white;
+        border: none;
+        padding: 2px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+    `;
+    addAllyButton.addEventListener('click', () => addAllyOrEnemy(index, 'allies'));
+    buttonContainer.appendChild(addAllyButton);
+
+    const addEnemyButton = document.createElement('button');
+    addEnemyButton.textContent = '+ Enemy';
+    addEnemyButton.className = 'no-drag';
+    addEnemyButton.style.cssText = `
+        background-color: #cc3333;
+        color: white;
+        border: none;
+        padding: 2px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+    `;
+    addEnemyButton.addEventListener('click', () => addAllyOrEnemy(index, 'enemies'));
+    buttonContainer.appendChild(addEnemyButton);
+
+    if (isDeleteMode) {
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = '✕';
+        deleteButton.className = 'no-drag';
+        deleteButton.style.cssText = `
+            background-color: #cc3333;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+        `;
+        deleteButton.addEventListener('click', () => {
+            confirmDelete('Delete this ally/enemy list?', () => {
+                allyEnemyLists.splice(index, 1);
+                saveState('allyEnemyLists', allyEnemyLists);
+                refreshSidebar();
+            });
+        });
+        buttonContainer.appendChild(deleteButton);
+    }
+
+    header.appendChild(buttonContainer);
+    allyEnemyListDiv.appendChild(header);
+
+    const listContainer = document.createElement('div');
+    listContainer.className = 'content-container';
+    listContainer.style.cssText = `
+        display: ${isElementMinimized('allyEnemyList', index) ? 'none' : 'flex'};
+        flex-direction: column;
+        gap: 5px;
+    `;
+
+    const allyListHeader = document.createElement('div');
+    allyListHeader.textContent = 'Allies';
+    allyListHeader.style.cssText = `
+        color: ${isLightMode ? '#336633' : '#55aa55'};
+        font-size: 16px;
+        padding: 5px;
+        border-radius: 3px;
+        margin-bottom: 5px;
+    `;
+    listContainer.appendChild(allyListHeader);
+
+    list.allies?.forEach((ally, allyIndex) => {
+        const allyDiv = document.createElement('div');
+        allyDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0f0f0' : '#444444'};
+            padding: 4px 8px;
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        `;
+
+        const allyName = document.createElement('span');
+        allyName.textContent = `${ally.emoji || '🤝'} ${ally.name}`;
+        allyName.style.cssText = `
+            color: ${isLightMode ? '#000000' : 'white'};
+            cursor: pointer;
+        `;
+        allyName.addEventListener('click', () => {
+            window.location.href = ally.link;
+        });
+        allyDiv.appendChild(allyName);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this ally?', () => {
+                    list.allies.splice(allyIndex, 1);
+                    saveState('allyEnemyLists', allyEnemyLists);
+                    refreshSidebar();
+                });
+            });
+            allyDiv.appendChild(deleteButton);
+        }
+
+        listContainer.appendChild(allyDiv);
+    });
+
+    const enemyListHeader = document.createElement('div');
+    enemyListHeader.textContent = 'Enemies';
+    enemyListHeader.style.cssText = `
+        color: ${isLightMode ? '#cc3333' : '#ff5555'};
+        font-size: 16px;
+        padding: 5px;
+        border-radius: 3px;
+        margin-bottom: 5px;
+        margin-top: 10px;
+    `;
+    listContainer.appendChild(enemyListHeader);
+
+    list.enemies?.forEach((enemy, enemyIndex) => {
+        const enemyDiv = document.createElement('div');
+        enemyDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0f0f0' : '#444444'};
+            padding: 4px 8px;
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        `;
+
+        const enemyName = document.createElement('span');
+        enemyName.textContent = `${enemy.emoji || '💀'} ${enemy.name}`;
+        enemyName.style.cssText = `
+            color: ${isLightMode ? '#000000' : 'white'};
+            cursor: pointer;
+        `;
+        enemyName.addEventListener('click', () => {
+            window.location.href = enemy.link;
+        });
+        enemyDiv.appendChild(enemyName);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this enemy?', () => {
+                    list.enemies.splice(enemyIndex, 1);
+                    saveState('allyEnemyLists', allyEnemyLists);
+                    refreshSidebar();
+                });
+            });
+            enemyDiv.appendChild(deleteButton);
+        }
+
+        listContainer.appendChild(enemyDiv);
+    });
+
+    allyEnemyListDiv.appendChild(listContainer);
+
+    if (isEditMode) {
+        const resizer = createResizer(allyEnemyListDiv, (width, height) => {
+            list.size = { width, height };
+            saveState('allyEnemyLists', allyEnemyLists);
+        });
+        allyEnemyListDiv.appendChild(resizer);
+    }
+
+    return allyEnemyListDiv;
+}
+
+function createLoanTrackerElement() {
+    const loanTrackerDiv = document.createElement('div');
+    loanTrackerDiv.className = 'draggable';
+    loanTrackerDiv.dataset.type = 'loanTracker';
+    loanTrackerDiv.style.cssText = `
+        background-color: ${isLightMode ? '#f0f0f0' : '#333333'};
+        padding: 10px;
+        border: 1px solid ${isLightMode ? '#cccccc' : '#444444'};
+        border-radius: 5px;
+        position: absolute;
+        width: ${loanTracker.size?.width || 200}px;
+        height: ${loanTracker.size?.height || 'auto'};
+        left: ${loanTracker.position?.x || 0}px;
+        top: ${loanTracker.position?.y || 0}px;
+        ${isEditMode ? 'cursor: move;' : ''}
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+        color: ${isLightMode ? '#000000' : 'white'};
+        font-size: 16px;
+        padding: 5px;
+        background-color: ${isLightMode ? '#e0e0e0' : '#444444'};
+        border-radius: 3px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    `;
+    header.textContent = 'Loan Tracker';
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+    const addLoanButton = document.createElement('button');
+    addLoanButton.textContent = '+ Loan';
+    addLoanButton.className = 'no-drag';
+    addLoanButton.style.cssText = `
+        background-color: #336633;
+        color: white;
+        border: none;
+        padding: 2px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+    `;
+    addLoanButton.addEventListener('click', async () => {
+        const result = await createLoanEntryDialog();
+
+        if (result) {
+            addLoanEntry(result.user, result.amount);
+        }
+    });
+    buttonContainer.appendChild(addLoanButton);
+
+    if (isDeleteMode) {
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Clear';
+        deleteButton.className = 'no-drag';
+        deleteButton.style.cssText = `
+            background-color: #cc3333;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+        `;
+        deleteButton.addEventListener('click', () => {
+            confirmDelete('Clear all loan entries?', () => {
+                loanTracker.entries = [];
+                saveState('loanTracker', loanTracker);
+                refreshSidebar();
+            });
+        });
+        buttonContainer.appendChild(deleteButton);
+    }
+
+    header.appendChild(buttonContainer);
+    loanTrackerDiv.appendChild(header);
+
+    const entriesContainer = document.createElement('div');
+    entriesContainer.className = 'content-container';
+    entriesContainer.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    `;
+
+    loanTracker.entries?.forEach((entry, entryIndex) => {
+        const entryDiv = document.createElement('div');
+        entryDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0f0f0' : '#444444'};
+            padding: 4px 8px;
+            border-radius: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        `;
+
+        const entryText = document.createElement('span');
+        entryText.textContent = `${entry.user}: $${entry.amount.toLocaleString()}`;
+        entryText.style.cssText = `color: ${isLightMode ? '#000000' : 'white'};`;
+        entryDiv.appendChild(entryText);
+
+        const paymentInput = document.createElement('input');
+        paymentInput.type = 'number';
+        paymentInput.placeholder = 'Payment';
+        paymentInput.style.cssText = `
+            width: 80px;
+            padding: 2px 4px;
+            border-radius: 3px;
+            border: 1px solid ${isLightMode ? '#cccccc' : '#666666'};
+            background-color: ${isLightMode ? '#ffffff' : '#333333'};
+            color: ${isLightMode ? '#000000' : 'white'};
+        `;
+        entryDiv.appendChild(paymentInput);
+
+        const applyButton = document.createElement('button');
+        applyButton.textContent = 'Apply';
+        applyButton.className = 'no-drag';
+        applyButton.style.cssText = `
+            background-color: #336633;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+            margin-left: 5px;
+        `;
+        applyButton.addEventListener('click', () => {
+            const payment = parseFloat(paymentInput.value);
+            if (!isNaN(payment) && payment > 0) {
+                entry.amount -= payment;
+                if (entry.amount <= 0) {
+                    loanTracker.entries.splice(entryIndex, 1);
+                }
+                saveState('loanTracker', loanTracker);
+                refreshSidebar();
+            }
+        });
+        entryDiv.appendChild(applyButton);
+
+        entriesContainer.appendChild(entryDiv);
+    });
+
+    loanTrackerDiv.appendChild(entriesContainer);
+
+    if (isEditMode) {
+        const resizer = createResizer(loanTrackerDiv, (width, height) => {
+            loanTracker.size = { width, height };
+            saveState('loanTracker', loanTracker);
+        });
+        loanTrackerDiv.appendChild(resizer);
+    }
+
+    return loanTrackerDiv;
+}
+
+function createAuctionTrackerElement() {
+    const auctionTrackerDiv = document.createElement('div');
+    auctionTrackerDiv.className = 'draggable';
+    auctionTrackerDiv.dataset.type = 'auctionTracker';
+    auctionTrackerDiv.style.cssText = `
+        background-color: ${isLightMode ? '#f0f0f0' : '#333333'};
+        padding: 10px;
+        border: 1px solid ${isLightMode ? '#cccccc' : '#444444'};
+        border-radius: 5px;
+        position: absolute;
+        width: ${auctionTracker.size?.width || 200}px;
+        height: ${auctionTracker.size?.height || 'auto'};
+        left: ${auctionTracker.position?.x || 0}px;
+        top: ${auctionTracker.position?.y || 0}px;
+        ${isEditMode ? 'cursor: move;' : ''}
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+        color: ${isLightMode ? '#000000' : 'white'};
+        font-size: 16px;
+        padding: 5px;
+        background-color: ${isLightMode ? '#e0e0e0' : '#444444'};
+        border-radius: 3px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    `;
+    header.textContent = 'Auction Tracker';
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+    const addAuctionButton = document.createElement('button');
+    addAuctionButton.textContent = '+ Auction';
+    addAuctionButton.className = 'no-drag';
+    addAuctionButton.style.cssText = `
+        background-color: #336633;
+        color: white;
+        border: none;
+        padding: 2px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+    `;
+    addAuctionButton.addEventListener('click', async () => {
+        const result = await createAuctionEntryDialog();
+
+        if (result) {
+            addAuctionEntry(result.item, result.seller, result.timeLeft);
+        }
+    });
+    buttonContainer.appendChild(addAuctionButton);
+
+    if (isDeleteMode) {
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Clear';
+        deleteButton.className = 'no-drag';
+        deleteButton.style.cssText = `
+            background-color: #cc3333;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+        `;
+        deleteButton.addEventListener('click', () => {
+            confirmDelete('Clear all auction entries?', () => {
+                auctionTracker.auctions = [];
+                saveState('auctionTracker', auctionTracker);
+                refreshSidebar();
+            });
+        });
+        buttonContainer.appendChild(deleteButton);
+    }
+
+    header.appendChild(buttonContainer);
+    auctionTrackerDiv.appendChild(header);
+
+    const auctionsContainer = document.createElement('div');
+    auctionsContainer.className = 'content-container';
+    auctionsContainer.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    `;
+
+    auctionTracker.auctions?.forEach((auction, auctionIndex) => {
+        const auctionDiv = document.createElement('div');
+        auctionDiv.style.cssText = `
+            background-color: ${isLightMode ? '#f0f0f0' : '#444444'};
+            padding: 4px 8px;
+            border-radius: 3px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        `;
+
+        const itemText = document.createElement('span');
+        itemText.textContent = `Item: ${auction.item}`;
+        itemText.style.cssText = `color: ${isLightMode ? '#000000' : 'white'};`;
+        auctionDiv.appendChild(itemText);
+
+        const sellerText = document.createElement('span');
+        sellerText.textContent = `Seller: ${auction.seller}`;
+        sellerText.style.cssText = `color: ${isLightMode ? '#000000' : 'white'};`;
+        auctionDiv.appendChild(sellerText);
+
+        const timeLeftText = document.createElement('span');
+        timeLeftText.textContent = `Time Left: ${auction.timeLeft} minutes`;
+        timeLeftText.style.cssText = `
+            color: ${auction.timeLeft <= 15 ? (isLightMode ? '#cc3333' : '#ff5555') : (isLightMode ? '#000000' : 'white')};
+            font-weight: ${auction.timeLeft <= 15 ? 'bold' : 'normal'};
+        `;
+        auctionDiv.appendChild(timeLeftText);
+
+        if (isDeleteMode) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = '✕';
+            deleteButton.className = 'no-drag';
+            deleteButton.style.cssText = `
+                background-color: #cc3333;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                border-radius: 3px;
+                align-self: flex-end;
+            `;
+            deleteButton.addEventListener('click', () => {
+                confirmDelete('Delete this auction entry?', () => {
+                    auctionTracker.auctions.splice(auctionIndex, 1);
+                    saveState('auctionTracker', auctionTracker);
+                    refreshSidebar();
+                });
+            });
+            auctionDiv.appendChild(deleteButton);
+        }
+
+        auctionsContainer.appendChild(auctionDiv);
+    });
+
+    auctionTrackerDiv.appendChild(auctionsContainer);
+
+    if (isEditMode) {
+        const resizer = createResizer(auctionTrackerDiv, (width, height) => {
+            auctionTracker.size = { width, height };
+            saveState('auctionTracker', auctionTracker);
+        });
+        auctionTrackerDiv.appendChild(resizer);
+    }
+
+    return auctionTrackerDiv;
+}
+
+function updateDayResetCountdown() {
+    const now = new Date();
+    const resetTime = new Date(now);
+    resetTime.setUTCHours(0, 0, 0, 0);
+    resetTime.setUTCDate(resetTime.getUTCDate() + 1);
+
+    const remainingTime = resetTime - now;
+    const hours = Math.floor(remainingTime / 3600000);
+    const minutes = Math.floor((remainingTime % 3600000) / 60000);
+    const seconds = Math.floor((remainingTime % 60000) / 1000);
+
+    const countdownElement = document.getElementById('dayResetCountdown');
+    if (countdownElement) {
+        countdownElement.textContent = `Day Reset: ${hours}h ${minutes}m ${seconds}s`;
+    }
+}
+
+// Initialize the script
+function initialize() {
+    createSidebar();
+
+    // Start daily reset check for todo lists
+    setInterval(checkTodoListResets, 60000);
+
+    // Initialize any todo lists that should reset daily
+    todoLists.forEach((list, index) => {
+        if (list.resetDaily) {
+            setupDailyReset(index);
+        }
+    });
+
+    // Add window resize handler
+    window.addEventListener('resize', () => {
+        preserveSidebarAnimation();
+    });
+}
+
+// Start the script
+initialize();
+})();
+
